@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>約分ゲーム</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#ff6f61" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #fffbe6;
+      font-family: 'Arial Rounded MT Bold', sans-serif;
+      height: 100vh;
+      overflow: hidden;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      font-size: 1.8rem;
+      color: #ff6f61;
+      margin: 10px 0 5px;
+    }
+    #game-area {
+      width: 100%;
+      max-width: 400px;
+      padding: 10px;
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #choices {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      width: 100%;
+    }
+    .btn {
+      font-size: 1.2rem;
+      padding: 10px;
+      background: #fdd835;
+      border: none;
+      border-radius: 8px;
+      min-height: 60px;
+    }
+    .btn:disabled {
+      background: #ccc;
+    }
+    .fraction {
+      display: inline-block;
+      text-align: center;
+      line-height: 1.2;
+    }
+    .fraction .top {
+      border-bottom: 2px solid #000;
+    }
+    .fraction .bottom {
+      margin-top: 2px;
+    }
+    select, button#startBtn {
+      font-size: 1rem;
+      padding: 5px 10px;
+      margin: 5px;
+    }
+    #timer, #score, #result {
+      font-size: 1rem;
+      margin: 2px 0;
+    }
+    #highscore {
+      font-size: 0.95rem;
+      margin-top: 5px;
+    }
+    #mistakes {
+      font-size: 0.95rem;
+      margin-top: 10px;
+      color: #444;
+      max-height: 150px;
+      overflow-y: auto;
+      border-top: 1px solid #aaa;
+      padding-top: 5px;
+      width: 100%;
+    }
+    .mistake-item {
+      margin-bottom: 6px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>約分ゲーム</h1>
+
+  <div id="game-area">
+    <div>
+      難易度：
+      <select id="difficulty-select">
+        <option value="easy">初級</option>
+        <option value="normal">中級</option>
+        <option value="hard">上級</option>
+      </select>
+      <button id="startBtn">スタート</button>
+    </div>
+
+    <div id="timer">残り時間：30秒</div>
+    <div id="question"></div>
+    <div id="choices"></div>
+    <div id="result"></div>
+    <div>スコア：<span id="score">0</span></div>
+    <div id="highscore">最高スコア：</div>
+    <div id="mistakes"></div>
+  </div>
+
+  <script>
+    let correctAnswer = "", score = 0, timeLeft = 30, timerInterval;
+    let difficulty = "easy", gameOver = false;
+    let usedQuestions = new Set();
+    let mistakes = [];
+
+    function playSound(url) {
+      const audio = new Audio(url);
+      audio.currentTime = 0;
+      audio.play();
+    }
+
+    const soundCorrect = 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_45c8ecf6f7.mp3';
+    const soundWrong = 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_f8ffb52c41.mp3';
+    const soundFinish = 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_6b51c5460a.mp3';
+
+    const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
+    const approxReduceImpossibleProb = 0.2;
+
+    function getRandomFraction(diff) {
+      let min, max;
+      if (diff === "easy") { min = 2; max = 10; }
+      else if (diff === "normal") { min = 5; max = 30; }
+      else { min = 20; max = 100; }
+
+      let wantNoReduce = Math.random() < approxReduceImpossibleProb;
+
+      for (let i = 0; i < 500; i++) {
+        let num = Math.floor(Math.random() * (max - min + 1)) + min;
+        let den = Math.floor(Math.random() * (max - num)) + num + 1;
+        let key = `${num}/${den}`;
+        let g = gcd(num, den);
+
+        if (usedQuestions.has(key)) continue;
+        if (wantNoReduce && g !== 1) continue;
+        if (!wantNoReduce && g === 1) continue;
+        if ((g === 2 || g === 3) && Math.random() < 0.6) continue;
+
+        usedQuestions.add(key);
+        return [num, den];
+      }
+      return [7, 14];
+    }
+
+    function displayFraction(n, d) {
+      return `<span class="fraction"><span class="top">${n}</span><br><span class="bottom">${d}</span></span>`;
+    }
+
+    function generateChoices(n, d) {
+      const choices = new Set([`${n}/${d}`]);
+      while (choices.size < 4) {
+        let off = Math.floor(Math.random() * 3) + 1;
+        choices.add(`${n + off}/${d + off + 1}`);
+      }
+      return Array.from(choices).sort(() => Math.random() - 0.5);
+    }
+
+    function nextQuestion() {
+      if (gameOver) return;
+      const [num, den] = getRandomFraction(difficulty);
+      const g = gcd(num, den);
+      const rn = num / g, rd = den / g;
+      correctAnswer = `${rn}/${rd}`;
+      document.getElementById("question").innerHTML = `この分数を約分してね： ${displayFraction(num, den)}`;
+
+      const options = generateChoices(rn, rd);
+      const choicesDiv = document.getElementById("choices");
+      choicesDiv.innerHTML = "";
+
+      options.forEach(opt => {
+        const btn = document.createElement("button");
+        btn.className = "btn";
+        const [n, d] = opt.split("/").map(Number);
+        btn.innerHTML = displayFraction(n, d);
+        btn.onclick = () => checkAnswer(opt, `${num}/${den}`, btn);
+        choicesDiv.appendChild(btn);
+      });
+    }
+
+    function checkAnswer(choice, question, btn) {
+      if (gameOver) return;
+      document.querySelectorAll(".btn").forEach(b => b.disabled = true);
+      if (choice === correctAnswer) {
+        playSound(soundCorrect);
+        document.getElementById("result").textContent = "〇 正解！";
+        score++;
+      } else {
+        playSound(soundWrong);
+        document.getElementById("result").textContent = `✕ 正解は ${correctAnswer}`;
+        mistakes.push({ question, your: choice, correct: correctAnswer });
+      }
+      document.getElementById("score").textContent = score;
+      setTimeout(nextQuestion, 800);
+    }
+
+    function startGame() {
+      difficulty = document.getElementById("difficulty-select").value;
+      score = 0; timeLeft = 30; gameOver = false;
+      usedQuestions.clear(); mistakes = [];
+      document.getElementById("score").textContent = score;
+      document.getElementById("result").textContent = "";
+      document.getElementById("mistakes").textContent = "";
+      document.getElementById("startBtn").disabled = true;
+      nextQuestion();
+
+      clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        timeLeft--;
+        document.getElementById("timer").textContent = `残り時間：${timeLeft}秒`;
+        if (timeLeft <= 0) {
+          clearInterval(timerInterval);
+          endGame();
+        }
+      }, 1000);
+    }
+
+    function endGame() {
+      gameOver = true;
+      playSound(soundFinish);
+      document.getElementById("question").textContent = "時間切れ！";
+      document.getElementById("choices").innerHTML = "";
+      document.getElementById("result").textContent = `あなたのスコアは ${score} 点です！`;
+      updateHighScore();
+
+      const container = document.getElementById("mistakes");
+      if (mistakes.length > 0) {
+        container.innerHTML = "<b>間違えた問題：</b><br>";
+        mistakes.forEach(item => {
+          const div = document.createElement("div");
+          div.className = "mistake-item";
+          div.innerHTML = `❌ ${displayFraction(...item.question.split("/"))} → あなた：${displayFraction(...item.your.split("/"))} ／ 正解：${displayFraction(...item.correct.split("/"))}`;
+          container.appendChild(div);
+        });
+      }
+      document.getElementById("startBtn").textContent = "もう一度プレイ";
+      document.getElementById("startBtn").disabled = false;
+    }
+
+    function updateHighScore() {
+      const key = `yakubunHighScore_${difficulty}`;
+      const high = parseInt(localStorage.getItem(key) || "0");
+      if (score > high) localStorage.setItem(key, score);
+      const allDifficulties = ['easy', 'normal', 'hard'];
+      const labels = { easy: '初級', normal: '中級', hard: '上級' };
+      let text = '最高スコア：<br>';
+      allDifficulties.forEach(d => {
+        const s = localStorage.getItem(`yakubunHighScore_${d}`) || 0;
+        text += `${labels[d]}：${s}点　`;
+      });
+      document.getElementById("highscore").innerHTML = text;
+    }
+
+    document.getElementById("startBtn").addEventListener("click", startGame);
+    window.onload = updateHighScore;
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./service-worker.js')
+        .then(() => console.log('Service Worker registered'))
+        .catch(err => console.log('Service Worker registration failed:', err));
+    }
+  </script>
+</body>
+</html>
